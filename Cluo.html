@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Player</title>
+    <style>
+        /* 页面布局：使内容完全适应屏幕并防止滚动 */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh; /* 页面高度占满视口 */
+            background-color: #f8f8f8;
+            overflow: hidden; /* 禁止滚动条 */
+        }
+
+        /* 视频容器：使容器适应屏幕大小 */
+        .video-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 视频设置：让视频自适应容器 */
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 保持视频的宽高比，确保完整显示视频 */
+        }
+
+        /* 设置标题 */
+        h3 {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <h3>Liweining<br> 
+     Zhoumingkang<br> 
+     Yuying  <br>
+    Zhouchenpu </h3>
+
+    <!-- 视频容器 -->
+    <div class="video-container">
+        <video controls>
+            <source src="https://liweining111.github.io/Liweining/Cluo_music.mp4" type="video/mp4">
+            您的浏览器不支持 HTML5 视频标签。
+        </video>
+    </div>
+
+</body>
+</html>
