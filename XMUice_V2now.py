@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from curling_rules_manager import CurlingRulesManager
 
 # 连接参数
 key = "liweining_4f8cd43d-57c0-4bd9-b234-1d43d72a3de3:6"
@@ -533,8 +534,9 @@ class ReplayMemory:
 
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
-# 初始化模型管理器和智能体
+# 初始化模型管理器、规则管理器和智能体
 model_manager = ModelManager()
+rules_manager = CurlingRulesManager()
 noise = 0.1
 agent = TD3Agent(state_dim=35, action_dim=3, hidden_dim=256, gamma=0.9, tau=0.0005, lr_actor=0.0005, lr_critic=0.0005,
                  policy_delay=8, policy_noise=noise, noise_clip=2 * noise, model_manager=model_manager)
@@ -565,6 +567,11 @@ shotnum1 = []
 houshou = 0
 com = 0
 retNullTime = 0
+
+# 初始化规则管理器的游戏状态
+current_shot_number = 0
+previous_state = None
+current_team = None
 
 def getv(x):
     p = [0.210936613469035, 1.91673185127749]
@@ -696,6 +703,42 @@ def huan1(value, mode):
         v3 = 3 * (value + 1) - 3
         return v3
 
+def detect_moved_stones(previous_state, current_state):
+    """
+    检测哪些冰壶在投壶后发生了移动
+    """
+    moved_stones = []
+    tolerance = 0.001  # 位置变化的容差
+    
+    for i in range(0, 32, 4):
+        # 检查 team1 的冰壶 (indices 0,1)
+        prev_pos = [previous_state[i] * 4.2996, previous_state[i + 1] * 10.4154]
+        curr_pos = [current_state[i] * 4.2996, current_state[i + 1] * 10.4154]
+        
+        if dist(prev_pos, curr_pos) > tolerance:
+            stone_info = {
+                'stone_id': f"team1_stone_{i//4}",
+                'team': 'team1',
+                'original_position': prev_pos,
+                'final_position': curr_pos if (current_state[i] != 0 or current_state[i + 1] != 0) else None
+            }
+            moved_stones.append(stone_info)
+        
+        # 检查 team2 的冰壶 (indices 2,3)
+        prev_pos = [previous_state[i + 2] * 4.2996, previous_state[i + 3] * 10.4154]
+        curr_pos = [current_state[i + 2] * 4.2996, current_state[i + 3] * 10.4154]
+        
+        if dist(prev_pos, curr_pos) > tolerance:
+            stone_info = {
+                'stone_id': f"team2_stone_{i//4}",
+                'team': 'team2',
+                'original_position': prev_pos,
+                'final_position': curr_pos if (current_state[i + 2] != 0 or current_state[i + 3] != 0) else None
+            }
+            moved_stones.append(stone_info)
+    
+    return moved_stones
+
 def strategy(action):
     lis = []
     lis.append(huan1(action[0], 0))
@@ -706,61 +749,46 @@ def strategy(action):
     return bestshot
 
 def get_reward(houshou, state):
-    xy1 = []
-    xy2 = []
-    dis1 = []
-    dis2 = []
-    s = 0
-    z = [2.375, 4.88]
-    r = 1.830
+    """
+    使用新的规则管理器计算奖励
+    """
+    # 解析冰壶位置
+    team1_stones = []
+    team2_stones = []
     num1 = 0
     num2 = 0
-    re = []
+    
     for i in range(0, 32, 4):
-        xy1.append([state[i], state[i + 1]])
-        if state[i] != 0 and state[i + 1] != 0:
+        # Team1 stones (indices 0,1 in each group of 4)
+        if state[i] != 0 or state[i + 1] != 0:
+            team1_stones.append([state[i] * 4.2996, state[i + 1] * 10.4154])
             num1 += 1
-        xy2.append([state[i + 2], state[i + 3]])
-        if state[i + 2] != 0 and state[i + 3] != 0:
-            num2 += 1
-    for i in range(8):
-        dis1.append(dist(xy1[i], z))
-        dis2.append(dist(xy2[i], z))
-    dis1 = sorted(dis1)
-    dis2 = sorted(dis2)
-    if dis1[0] > r and dis2[0] > r:
-        if houshou:
-            re.append(-s / 8)
-            re.append(num1 / 8)
-            return re
         else:
-            re.append(s / 8)
-            re.append(num2 / 8)
-            return re
-    elif dis1[0] < dis2[0]:
-        if dis2[0] < r:
-            r = dis2[0]
-        for i in range(8):
-            if dis1[i] < r:
-                s += 1
-            else:
-                break
-    else:
-        if dis1[0] < r:
-            r = dis1[0]
-        for i in range(8):
-            if dis2[i] < r:
-                s -= 1
-            else:
-                break
+            team1_stones.append(None)
+            
+        # Team2 stones (indices 2,3 in each group of 4)  
+        if state[i + 2] != 0 or state[i + 3] != 0:
+            team2_stones.append([state[i + 2] * 4.2996, state[i + 3] * 10.4154])
+            num2 += 1
+        else:
+            team2_stones.append(None)
+    
+    # 使用规则管理器计算得分
+    team1_score, team2_score = rules_manager.calculate_end_score(team1_stones, team2_stones)
+    
+    # 计算奖励（归一化到[-1, 1]范围）
+    score_diff = (team1_score - team2_score) / 8.0  # 最大可能得分差是8
+    
     if houshou:
-        re.append(-s / 8)
-        re.append(num1 / 8)
-        return re
+        # 如果当前是后手，返回负的得分差（因为我们是team1视角）
+        reward = -score_diff
+        stone_count = num1 / 8.0
     else:
-        re.append(s / 8)
-        re.append(num2 / 8)
-        return re
+        # 如果当前是先手，直接返回得分差
+        reward = score_diff
+        stone_count = num2 / 8.0
+    
+    return [reward, stone_count]
 
 # 主游戏循环
 while True:
@@ -790,6 +818,25 @@ while True:
         state.append(shotnum)
     if messageList[0] == "GO":
         s = np.array(list(map(float, state[0])))
+        
+        # 自由防守区违例检查
+        current_shot_number = int(state[1])
+        if current_shot_number < 4 and previous_state is not None:
+            # 检查是否有自由防守区违例
+            moved_stones = detect_moved_stones(previous_state, s)
+            current_team = 'team1' if current_shot_number % 2 == 0 else 'team2'
+            
+            has_violation, violations = rules_manager.check_free_guard_zone_violation(
+                current_shot_number, moved_stones, current_team
+            )
+            
+            if has_violation:
+                print(f"检测到自由防守区违例 - 第{current_shot_number + 1}壶")
+                # 在实际比赛中，这里会应用处罚
+                # penalty_actions = rules_manager.apply_free_guard_zone_penalty(violations, last_thrown_stone)
+        
+        previous_state = s.copy()
+        
         state1.append(s)
         startflag1 = True
         state3 = np.append(huan(s), int(state[1]) / 16)
@@ -868,8 +915,43 @@ while True:
         shotnum1 = []
         total_size += 1
         print(f"已完成游戏局数: {total_size}")
+        
+        # 更新规则管理器的游戏状态
+        if len(state1) > 0 and len(state2) > 0:
+            # 解析最终的冰壶位置
+            final_state = state2[-1]  # 最后一个状态
+            team1_stones = []
+            team2_stones = []
+            
+            for i in range(0, 32, 4):
+                if final_state[i] != 0 or final_state[i + 1] != 0:
+                    team1_stones.append([final_state[i] * 4.2996, final_state[i + 1] * 10.4154])
+                else:
+                    team1_stones.append(None)
+                    
+                if final_state[i + 2] != 0 or final_state[i + 3] != 0:
+                    team2_stones.append([final_state[i + 2] * 4.2996, final_state[i + 3] * 10.4154])
+                else:
+                    team2_stones.append(None)
+            
+            # 更新规则管理器状态
+            rules_manager.update_game_state(team1_stones, team2_stones)
+            
+            # 显示当前局得分和累计得分
+            current_end_scores = rules_manager.end_scores[-1]
+            print(f"第{current_end_scores['end']}局得分: Team1={current_end_scores['team1_score']}, Team2={current_end_scores['team2_score']}")
+            print(f"累计得分: Team1={current_end_scores['cumulative_team1']}, Team2={current_end_scores['cumulative_team2']}")
+            
+            # 显示下一局先手
+            if not rules_manager.is_game_over():
+                print(f"下一局先手: {rules_manager.first_hand_team}")
+        
         com = 1
         agent.on_game_end()
+        
+        # 重置状态跟踪变量
+        previous_state = None
+        current_shot_number = 0
     if messageList[0] == "MOTIONINFO":
         x_coordinate = float(messageList[1])
         y_coordinate = float(messageList[2])
